@@ -16,6 +16,7 @@ Every patch is the diff of an open upstream pull request, unchanged and credited
 | --- | --- | --- |
 | [`0001`](patches/parca/0001-fix-append-clickhouse-column-number-for-each-line-to-stop-flamegraph-crashes.patch) | [parca-dev/parca#6420](https://github.com/parca-dev/parca/pull/6420) | Flamegraph queries crash on the ClickHouse backend with `arrow/array: index out of range` ([#6409](https://github.com/parca-dev/parca/issues/6409)) |
 | [`0002`](patches/parca/0002-fix-make-hasprofiledata-an-existence-probe-to-stop-full-table-scans.patch) | [parca-dev/parca#6402](https://github.com/parca-dev/parca/pull/6402) | `HasProfileData` scans the whole ClickHouse table instead of stopping at the first row |
+| [`0003`](patches/parca/0003-fix-store-merge-profile-timestamps-in-milliseconds-to-stop-pprof-time-overflow.patch) | [parca-dev/parca#6508](https://github.com/parca-dev/parca/pull/6508) | Merged pprof downloads carry a wrong time because a nanosecond timestamp overflows |
 
 ## Image
 
