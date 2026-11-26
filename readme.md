@@ -17,7 +17,8 @@ Every patch is the diff of an open upstream pull request, unchanged and credited
 | [`0001`](patches/parca/0001-fix-append-clickhouse-column-number-for-each-line-to-stop-flamegraph-crashes.patch) | [parca-dev/parca#6420](https://github.com/parca-dev/parca/pull/6420) | Flamegraph queries crash on the ClickHouse backend with `arrow/array: index out of range` ([#6409](https://github.com/parca-dev/parca/issues/6409)) |
 | [`0002`](patches/parca/0002-fix-make-hasprofiledata-an-existence-probe-to-stop-full-table-scans.patch) | [parca-dev/parca#6402](https://github.com/parca-dev/parca/pull/6402) | `HasProfileData` scans the whole ClickHouse table instead of stopping at the first row |
 | [`0003`](patches/parca/0003-fix-store-merge-profile-timestamps-in-milliseconds-to-stop-pprof-time-overflow.patch) | [parca-dev/parca#6508](https://github.com/parca-dev/parca/pull/6508) | Merged pprof downloads carry a wrong time because a nanosecond timestamp overflows |
-| [`0004`](patches/parca/0004-feat-add-a-flag-to-open-the-ui-without-a-default-query-to-stop-fleet-wide-first-loads.patch) | [parca-dev/parca#6509](https://github.com/parca-dev/parca/pull/6509) | Opening the UI without a query runs a default query over every series; `--ui-disable-auto-query` opens it empty instead |
+| [`0004`](patches/parca/0004-fix-skip-the-column-when-decoding-clickhouse-lines-to-stop-dropping-interpreted-function-names.patch) | [parca-dev/parca#6510](https://github.com/parca-dev/parca/pull/6510) | The ClickHouse backend stores interpreted frames, such as Python frames, without function names, so flame graphs show them as `0x0` |
+| [`0005`](patches/parca/0005-feat-add-a-flag-to-open-the-ui-without-a-default-query-to-stop-fleet-wide-first-loads.patch) | [parca-dev/parca#6509](https://github.com/parca-dev/parca/pull/6509) | Opening the UI without a query runs a default query over every series; `--ui-disable-auto-query` opens it empty instead |
 
 ## Image
 

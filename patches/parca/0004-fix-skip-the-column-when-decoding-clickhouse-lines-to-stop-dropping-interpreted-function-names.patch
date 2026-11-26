@@ -1,0 +1,83 @@
+From b4de9f12ff7a294fd1ad69269e83de00c94e87d1 Mon Sep 17 00:00:00 2001
+From: Simone Primarosa <3505087+simonepri@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 23:22:03 +0100
+Subject: [PATCH] pkg/clickhouse: skip the column when decoding stored lines
+
+The ClickHouse ingester stores interpreted frames, such as Python
+frames from the agent, without their function names. The UI shows each
+of them as 0x0. decodeLineInfo reads the line number and then takes the
+next byte as the has-function flag, but every location encoder writes
+the column number between the two, as DecodeSymbolizationInfo expects.
+With a column of 0 the flag reads false and the function is skipped.
+
+Skip the column before reading the flag. The new test encodes a location
+with EncodeOtelLocation and checks that the function survives decoding
+for several column values; it fails before the change.
+---
+ pkg/clickhouse/ingester.go      |  4 ++++
+ pkg/clickhouse/ingester_test.go | 38 +++++++++++++++++++++++++++++++++
+ 2 files changed, 42 insertions(+)
+ create mode 100644 pkg/clickhouse/ingester_test.go
+
+diff --git a/pkg/clickhouse/ingester.go b/pkg/clickhouse/ingester.go
+index 128a1a29..4e1f5240 100644
+--- a/pkg/clickhouse/ingester.go
++++ b/pkg/clickhouse/ingester.go
+@@ -211,6 +211,10 @@ func decodeLineInfo(data []byte) LineInfo {
+ 		offset += n
+ 		info.LineNumber = int64(lineNum)
+ 
++		// Skip column, which every location encoder writes after the line number.
++		_, n = varint.Uvarint(data[offset:])
++		offset += n
++
+ 		hasFunction := data[offset] == 0x1
+ 		offset++
+ 
+diff --git a/pkg/clickhouse/ingester_test.go b/pkg/clickhouse/ingester_test.go
+new file mode 100644
+index 00000000..d884ab65
+--- /dev/null
++++ b/pkg/clickhouse/ingester_test.go
+@@ -0,0 +1,38 @@
++// Copyright 2026 The Parca Authors
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package clickhouse
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	pprofextended "go.opentelemetry.io/proto/otlp/profiles/v1development"
++
++	"github.com/parca-dev/parca/pkg/profile"
++)
++
++func TestDecodeLineInfoReadsFunctionAfterColumn(t *testing.T) {
++	stringTable := []string{"", "handle_request", "app.py"}
++	funcs := []*pprofextended.Function{{NameStrindex: 1, FilenameStrindex: 2, StartLine: 10}}
++
++	for _, column := range []int64{0, 1, 300} {
++		loc := &pprofextended.Location{Lines: []*pprofextended.Line{{FunctionIndex: 1, Line: 42, Column: column}}}
++		info := decodeLineInfo(profile.EncodeOtelLocation(nil, loc, nil, funcs, stringTable))
++
++		require.Equal(t, int64(42), info.LineNumber)
++		require.Equal(t, int64(10), info.FunctionStartLine)
++		require.Equal(t, "handle_request", info.FunctionName)
++		require.Equal(t, "app.py", info.FunctionFilename)
++	}
++}
+-- 
+2.56.1
+
