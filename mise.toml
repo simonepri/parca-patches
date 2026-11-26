@@ -1,0 +1,14 @@
+# Pins the upstream Parca release, the patch version, and the tools that patch, test, build, and publish the patched server image.
+
+[tools]
+go = "1.26.8"
+node = "22.22.2"
+pnpm = "11.5.2"
+jq = "1.8.2"
+
+[env]
+# renovate: datasource=github-releases depName=parca-dev/parca
+PARCA_UPSTREAM = "v0.30.0"
+PARCA_PATCH_VERSION = "0.1.0"
+PARCA_IMAGE = "ghcr.io/simonepri/parca"
+PARCA_IMAGE_TAG = "{{env.PARCA_UPSTREAM}}-p{{env.PARCA_PATCH_VERSION}}"

@@ -1,0 +1,5 @@
+.DS_Store
+*.log
+
+# Cloned upstream sources patched by build/*/patch.sh
+third_party/
