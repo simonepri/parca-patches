@@ -12,3 +12,39 @@ PARCA_UPSTREAM = "v0.30.0"
 PARCA_PATCH_VERSION = "0.1.0"
 PARCA_IMAGE = "ghcr.io/simonepri/parca"
 PARCA_IMAGE_TAG = "{{env.PARCA_UPSTREAM}}-p{{env.PARCA_PATCH_VERSION}}"
+
+[tasks."patch:parca"]
+description = "Apply patches to third_party/parca"
+run = "build/parca/patch.sh"
+
+[tasks.patch]
+description = "Apply all patches to third_party upstreams"
+depends = ["patch:parca"]
+
+[tasks."build:parca"]
+description = "Build the patched Parca image for the local platform"
+depends = ["patch:parca"]
+run = "build/parca/build.sh"
+
+[tasks.build]
+description = "Build all patched images"
+depends = ["build:parca"]
+
+[tasks."publish:parca"]
+description = "Build and publish the patched multi-arch Parca image to GHCR"
+depends = ["patch:parca"]
+run = "build/parca/publish.sh"
+
+[tasks.publish]
+description = "Publish all patched images"
+depends = ["publish:parca"]
+
+[tasks."test:parca"]
+description = "Run the patched Parca unit tests for the packages the patches touch"
+dir = "third_party/parca"
+depends = ["patch:parca"]
+run = "go test -race ./pkg/clickhouse/... ./pkg/parcacol/... ./pkg/query/..."
+
+[tasks.test]
+description = "Run all patched unit tests"
+depends = ["test:parca"]

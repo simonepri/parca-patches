@@ -1,0 +1,66 @@
+# Checks every change: the patches apply to the pinned upstream release, the patched packages' unit tests pass, and the image builds.
+name: CI
+
+on:
+  push:
+    branches: [ main, release-please--branches--main ]
+  pull_request:
+    branches: [ main, release-please--branches--main ]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-patches:
+    name: Validate Upstream Patch Rebase
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Mise
+        uses: jdx/mise-action@v5
+        with:
+          cache: true
+      - name: Apply All Patches
+        run: mise run patch
+
+  parca-unit-tests:
+    name: Parca Unit Tests
+    needs: [validate-patches]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Mise
+        uses: jdx/mise-action@v5
+        with:
+          cache: true
+      - name: Run Patched Parca Unit Tests
+        run: mise run test:parca
+
+  parca-image:
+    name: Parca Image Build
+    needs: [validate-patches]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Install Mise
+        uses: jdx/mise-action@v5
+        with:
+          cache: true
+      - name: Build the Patched Parca Image
+        run: mise run build:parca
+      - name: Check the Image Serves the UI
+        run: |
+          tag="$(mise env --json | jq -r .PARCA_IMAGE_TAG)"
+          docker run --detach --name parca --publish 7070:7070 "local/parca:$tag" /parca --config-path=/parca.yaml
+          for _ in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:7070/ | grep -q '<div id="root"'; then
+              echo "Parca serves the UI"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs parca
+          echo "::error::Parca did not serve the UI within 60 seconds"
+          exit 1
