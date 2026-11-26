@@ -1,0 +1,47 @@
+From a95c5b13bc003d7d129f3501db7a784013d76f0b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Javier=20Ca=C3=B1adas?= <jcanadas@tinybird.co>
+Date: Fri, 4 Sep 2026 16:43:25 +0200
+Subject: [PATCH] fix: make HasProfileData an existence probe instead of a
+ full-table scan
+
+HasProfileData delegated to ProfileTypes with a zero time range, which
+skips the time filter and runs a DISTINCT over every row in the table,
+only for the result to be reduced to a boolean. A LIMIT 1 probe returns
+the same answer after reading a single granule. HasProfileData backs the
+UI's empty-state check and runs on every page load.
+---
+ pkg/clickhouse/querier.go | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/pkg/clickhouse/querier.go b/pkg/clickhouse/querier.go
+index 96716c7..4689d60 100644
+--- a/pkg/clickhouse/querier.go
++++ b/pkg/clickhouse/querier.go
+@@ -264,11 +264,21 @@ func (q *Querier) ProfileTypes(
+ 
+ // HasProfileData checks if there is any profile data in the store.
+ func (q *Querier) HasProfileData(ctx context.Context) (bool, error) {
+-	types, err := q.ProfileTypes(ctx, time.UnixMilli(0), time.UnixMilli(0))
++	ctx, span := q.tracer.Start(ctx, "ClickHouse/HasProfileData")
++	defer span.End()
++
++	// LIMIT 1 lets ClickHouse stop at the first granule instead of running
++	// the previous DISTINCT over the whole table.
++	rows, err := q.client.Query(ctx, fmt.Sprintf(`
++		SELECT 1 FROM %s
++		LIMIT 1
++	`, q.client.FullTableName()))
+ 	if err != nil {
+-		return false, err
++		return false, fmt.Errorf("failed to query profile data existence: %w", err)
+ 	}
+-	return len(types) > 0, nil
++	defer rows.Close()
++
++	return rows.Next(), rows.Err()
+ }
+ 
+ // QueryRange executes a range query and returns time series data.
+-- 
+2.56.1
+
