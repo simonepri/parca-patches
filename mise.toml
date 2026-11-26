@@ -9,7 +9,7 @@ jq = "1.8.2"
 [env]
 # renovate: datasource=github-releases depName=parca-dev/parca
 PARCA_UPSTREAM = "v0.30.0"
-PARCA_PATCH_VERSION = "0.1.0"
+PARCA_PATCH_VERSION = "0.2.0"
 PARCA_IMAGE = "ghcr.io/simonepri/parca"
 PARCA_IMAGE_TAG = "{{env.PARCA_UPSTREAM}}-p{{env.PARCA_PATCH_VERSION}}"
 
