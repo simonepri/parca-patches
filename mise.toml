@@ -14,7 +14,7 @@ PARCA_IMAGE = "ghcr.io/simonepri/parca"
 PARCA_IMAGE_TAG = "{{env.PARCA_UPSTREAM}}-p{{env.PARCA_PATCH_VERSION}}"
 # renovate: datasource=git-refs depName=parca-dev/parcagpu branch=main
 PARCAGPU_UPSTREAM = "ba7a41959637126653749335703db1b865008eae"
-PARCAGPU_PATCH_VERSION = "0.1.0"
+PARCAGPU_PATCH_VERSION = "0.2.0"
 PARCAGPU_IMAGE = "ghcr.io/simonepri/parcagpu"
 PARCAGPU_IMAGE_TAG = "{{env.PARCAGPU_UPSTREAM | truncate(length=7, end='')}}-p{{env.PARCAGPU_PATCH_VERSION}}"
 
