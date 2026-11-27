@@ -1,6 +1,5 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "last-release-sha": "3bdaf836a0f59fbd1a66a4e6269177498a41a016",
   "packages": {
     "patches/parca": {
       "component": "parca",
