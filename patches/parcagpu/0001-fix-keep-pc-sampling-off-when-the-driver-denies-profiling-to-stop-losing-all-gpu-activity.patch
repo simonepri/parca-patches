@@ -1,0 +1,285 @@
+From f675d91d4b7931afd0af6c7737635a08c8c476da Mon Sep 17 00:00:00 2001
+From: Simone Primarosa <3505087+simonepri@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 16:35:09 +0000
+Subject: [PATCH] Keep PC sampling off when the driver denies profiling
+
+With the NVIDIA driver's default NVreg_RestrictProfilingToAdminUsers=1,
+only processes with CAP_SYS_ADMIN may use the performance counters PC
+sampling needs. CUPTI doesn't say so up front: cuptiPCSamplingEnable and
+the configuration calls succeed, and at the first module load or kernel
+launch CUPTI fails with CUPTI_ERROR_INSUFFICIENT_PRIVILEGES and calls
+cuptiFinalize on itself. That drops parcagpu's subscriber and every
+activity kind, so the process reports nothing more: no callbacks, no
+kernel activity, no completeBuffer. At exit cuptiEnableCallback on the
+dead subscriber fails with CUPTI_ERROR_INVALID_PARAMETER (#59, #60).
+A minimal injection that only enables PC sampling and sets a sampling
+data buffer, and NVIDIA's pc_sampling_continuous sample, do the same.
+
+PCSampling::isSupported now reads RmProfilingAdminOnly from
+/proc/driver/nvidia/params and CapEff from /proc/self/status, and keeps
+PC sampling off with a warning when profiling is restricted and the
+process lacks CAP_SYS_ADMIN, as the driver's own check does. Kernel
+activity and launch probes then keep working, and the agent sees the
+process as not PC sampling capable. Without the params file the check
+passes, as before.
+
+Fixes #59
+---
+ CMakeLists.txt                 | 10 +++++
+ Makefile                       |  6 ++-
+ README.md                      |  3 +-
+ src/pc_sampling.cpp            | 22 ++++++----
+ src/profiling_access.h         | 54 ++++++++++++++++++++++++
+ test/test_profiling_access.cpp | 76 ++++++++++++++++++++++++++++++++++
+ 6 files changed, 161 insertions(+), 10 deletions(-)
+ create mode 100644 src/profiling_access.h
+ create mode 100644 test/test_profiling_access.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0cbab6b..cb41e3d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -226,6 +226,16 @@ if(BUILD_TESTS)
+         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+     )
+ 
++    add_executable(test_profiling_access
++        test/test_profiling_access.cpp
++    )
++    target_include_directories(test_profiling_access PRIVATE
++        ${CMAKE_CURRENT_SOURCE_DIR}/src
++    )
++    set_target_properties(test_profiling_access PROPERTIES
++        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
++    )
++
+     add_executable(test_nvtx
+         test/test_nvtx.c
+     )
+diff --git a/Makefile b/Makefile
+index 23093ac..85dd40b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,4 +1,4 @@
+-.PHONY: all clean test build-amd64 build-arm64 build-all cross docker-push docker-test-build docker-test-run format local debug generate bpf-test microbenchmarks test-multi test-pc-real test-pc-mock test-blocking-mock test-graph-rate-limit test-pc-contexts test-nvtx test-nvtx-real test-agent-ctl test-gate test-machine-gpus test-log
++.PHONY: all clean test build-amd64 build-arm64 build-all cross docker-push docker-test-build docker-test-run format local debug generate bpf-test microbenchmarks test-multi test-pc-real test-pc-mock test-blocking-mock test-graph-rate-limit test-pc-contexts test-nvtx test-nvtx-real test-agent-ctl test-gate test-machine-gpus test-profiling-access test-log
+ 
+ LIB_NAME = libparcagpucupti.so
+ # Bundled CUPTI that Docker builds ship next to $(LIB_NAME)
+@@ -81,6 +81,10 @@ test: local
+ test-machine-gpus: local
+ 	./build-local/bin/test_machine_gpus
+ 
++# Driver profiling restriction and CAP_SYS_ADMIN check (no GPU/root).
++test-profiling-access: local
++	./build-local/bin/test_profiling_access
++
+ test-nvtx: local
+ 	@echo "=== Running NVTX test ==="
+ 	@LD_LIBRARY_PATH="$(CURDIR)/build-local/lib:$$LD_LIBRARY_PATH" \
+diff --git a/README.md b/README.md
+index 3dae5fb..d70e19b 100644
+--- a/README.md
++++ b/README.md
+@@ -73,7 +73,7 @@ variable or an invalid value is logged as a warning (see [Logging](#logging)).
+ |---|---|---|
+ | `PARCAGPU_RATE_LIMIT` | 100 / GPUs | Kernel launches per second per thread that reach the probes (token bucket). Split across the machine's GPUs (`/proc/driver/nvidia/gpus`, not only those the process sees), so with a launching thread per GPU the machine sends about 100/s: 12.5 per thread on 8 GPUs. |
+ | `PARCAGPU_GRAPH_RATE_LIMIT` | 20 / GPUs | The same for graph launches (`cuGraphLaunch`, `cudaGraphLaunch`), from a separate bucket, so graph replays can't flood the probes and eager bursts can't starve graphs. |
+-| `PARCAGPU_PC_SAMPLING_RATE` | unset | Set to enable PC sampling: target samples per second, reached by adjusting each window's dice-roll probability. 0 enables it at a fixed probability. |
++| `PARCAGPU_PC_SAMPLING_RATE` | unset | Set to enable PC sampling: target samples per second, reached by adjusting each window's dice-roll probability. 0 enables it at a fixed probability. Needs access to the GPU performance counters: CAP_SYS_ADMIN, or the driver loaded with `NVreg_RestrictProfilingToAdminUsers=0`; without it parcagpu keeps PC sampling off. |
+ | `PARCAGPU_SAMPLING_FACTOR` | 20 | PC sampling period, 2^factor cycles per SM, 5-31. Applied instead of CUPTI's per-GPU default (10 on a GB10). |
+ | `PARCAGPU_PC_HW_BUFFER_MB` | unset | CUPTI's PC sampling hardware buffer in MB, up to 4096. Unset, 0 or out of range: CUPTI's 512 MB. On a GB10, forcing any size has made PC sampling return no data. |
+ | `PARCAGPU_METADATA_REFRESH_MS` | 30000 | How often cubins, the stall reason map and `gpu_config` are re-emitted. A consumer that attaches while another is attached gets them only then: the USDT semaphore stays at 1. |
+@@ -227,6 +227,7 @@ make clean
+ make test                 # Mock CUPTI harness
+ make test-nvtx            # NVTX collector
+ make test-machine-gpus    # Machine GPU count and the rate limit split
++make test-profiling-access # Driver profiling restriction check
+ make test-gate            # PC sampling gate, under ThreadSanitizer
+ make test-pc-contexts     # PC sampling start/stop across mock contexts
+ make test-agent-ctl       # Control over procctl, from a Go agent
+diff --git a/src/pc_sampling.cpp b/src/pc_sampling.cpp
+index 04e74bd..e0913dc 100644
+--- a/src/pc_sampling.cpp
++++ b/src/pc_sampling.cpp
+@@ -9,6 +9,7 @@
+ #include "parcagpu_ctl.h"
+ #include "pc_gate.h"
+ #include "probes.h"
++#include "profiling_access.h"
+ #include <algorithm>
+ #include <cstdio>
+ #include <cstdlib>
+@@ -555,14 +556,19 @@ bool PCSampling::isSupported(bool agentControl) {
+     return false;
+   }
+ 
+-  // Attempt a lightweight permission probe. CUPTI PC sampling requires
+-  // either root, CAP_SYS_ADMIN, or the NVIDIA module parameter
+-  // NVreg_RestrictProfilingToAdminUsers=0.
+-  // We cannot easily pre-check permissions without attempting CUPTI calls,
+-  // so we defer the real check to initialize() where enablePCSampling()
+-  // will fail with a CUPTI error if permissions are insufficient.
+-  // TODO: Add explicit permission pre-check.
+-  // Reference: https://developer.nvidia.com/nvidia-development-tools-solutions-err_nvgpuctrperm-permission-issue-performance-counters
++  // Without access to the performance counters, CUPTI accepts PC sampling
++  // and then finalizes itself at the first kernel launch, silencing all of
++  // parcagpu (profiling_access.h).
++  if (!profilingAllowed()) {
++    PLOG_WARN(0, kLogComponent,
++              "PC sampling disabled: the NVIDIA driver restricts GPU "
++              "profiling to admin users (NVreg_RestrictProfilingToAdminUsers"
++              "=1) and this process lacks CAP_SYS_ADMIN; see "
++              "https://developer.nvidia.com/"
++              "nvidia-development-tools-solutions-err_nvgpuctrperm-permission-"
++              "issue-performance-counters");
++    return false;
++  }
+ 
+   int major = driverVersion / 1000;
+   int minor = (driverVersion % 1000) / 10;
+diff --git a/src/profiling_access.h b/src/profiling_access.h
+new file mode 100644
+index 0000000..4269b59
+--- /dev/null
++++ b/src/profiling_access.h
+@@ -0,0 +1,54 @@
++// Copyright 2026 The Parca Authors
++// SPDX-License-Identifier: Apache-2.0
++
++#ifndef PARCAGPU_PROFILING_ACCESS_H_
++#define PARCAGPU_PROFILING_ACCESS_H_
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++namespace parcagpu {
++
++// Whether the NVIDIA driver lets this process use the GPU performance
++// counters that PC sampling needs. With NVreg_RestrictProfilingToAdminUsers=1
++// (the default, shown as "RmProfilingAdminOnly: 1" in the driver's params)
++// only processes with CAP_SYS_ADMIN may, whatever their uid. CUPTI doesn't
++// say so up front: cuptiPCSamplingEnable and the configuration calls succeed,
++// and at the first module load or kernel launch CUPTI fails with
++// CUPTI_ERROR_INSUFFICIENT_PRIVILEGES and finalizes itself, which drops
++// parcagpu's subscriber and every activity kind along with PC sampling.
++// True when the driver doesn't say (no params file, or no such line).
++inline bool profilingAllowed(const char *params = "/proc/driver/nvidia/params",
++                             const char *status = "/proc/self/status") {
++  FILE *f = fopen(params, "r");
++  if (!f)
++    return true;
++  char line[256];
++  int adminOnly = 0;
++  while (fgets(line, sizeof(line), f)) {
++    if (sscanf(line, "RmProfilingAdminOnly: %d", &adminOnly) == 1)
++      break;
++  }
++  fclose(f);
++  if (adminOnly == 0)
++    return true;
++
++  f = fopen(status, "r");
++  if (!f)
++    return false;
++  unsigned long long capEff = 0;
++  while (fgets(line, sizeof(line), f)) {
++    if (strncmp(line, "CapEff:", 7) == 0) {
++      capEff = strtoull(line + 7, nullptr, 16);
++      break;
++    }
++  }
++  fclose(f);
++  constexpr int kCapSysAdmin = 21;
++  return (capEff >> kCapSysAdmin) & 1;
++}
++
++} // namespace parcagpu
++
++#endif // PARCAGPU_PROFILING_ACCESS_H_
+diff --git a/test/test_profiling_access.cpp b/test/test_profiling_access.cpp
+new file mode 100644
+index 0000000..be39cbf
+--- /dev/null
++++ b/test/test_profiling_access.cpp
+@@ -0,0 +1,76 @@
++// Copyright 2026 The Parca Authors
++// SPDX-License-Identifier: Apache-2.0
++//
++// Unit test for profiling_access.h: reading the driver's profiling
++// restriction and the process's CAP_SYS_ADMIN. No GPU needed.
++
++#include "profiling_access.h"
++
++#include <cstdio>
++#include <string>
++#include <unistd.h>
++
++using namespace parcagpu;
++
++static int failures = 0;
++
++#define CHECK(cond)                                                            \
++  do {                                                                         \
++    if (!(cond)) {                                                             \
++      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);          \
++      failures++;                                                              \
++    }                                                                          \
++  } while (0)
++
++static void writeFile(const std::string &path, const char *text) {
++  FILE *f = fopen(path.c_str(), "w");
++  fputs(text, f);
++  fclose(f);
++}
++
++int main() {
++  char tmpl[] = "/tmp/parcagpu-prof-XXXXXX";
++  const char *root = mkdtemp(tmpl);
++  if (!root) {
++    perror("mkdtemp");
++    return 1;
++  }
++  const std::string params = std::string(root) + "/params";
++  const std::string status = std::string(root) + "/status";
++  const char *p = params.c_str(), *s = status.c_str();
++
++  // No driver params: nothing known, allowed.
++  CHECK(profilingAllowed(p, s));
++
++  writeFile(status, "Name:\tpython\nCapInh:\t0000000000000000\n"
++                    "CapEff:\t0000000000000000\nCapBnd:\t00000000a80425fb\n");
++  writeFile(params, "ResmanDebugLevel: 4294967295\nRmProfilingAdminOnly: 1\n"
++                    "EnableMSI: 1\n");
++  CHECK(!profilingAllowed(p, s)); // restricted, no capabilities
++  writeFile(status, "CapEff:\t00000000a80425fb\n");
++  CHECK(!profilingAllowed(p, s)); // container root: no CAP_SYS_ADMIN
++  writeFile(status, "CapEff:\t000001ffffffffff\n");
++  CHECK(profilingAllowed(p, s)); // privileged
++  writeFile(status, "CapEff:\t0000000000200000\n");
++  CHECK(profilingAllowed(p, s)); // CAP_SYS_ADMIN alone
++
++  writeFile(status, "CapEff:\t0000000000000000\n");
++  writeFile(params, "ResmanDebugLevel: 4294967295\nRmProfilingAdminOnly: 0\n");
++  CHECK(profilingAllowed(p, s)); // unrestricted
++  writeFile(params, "ResmanDebugLevel: 4294967295\n");
++  CHECK(profilingAllowed(p, s)); // driver doesn't say
++
++  writeFile(params, "RmProfilingAdminOnly: 1\n");
++  unlink(s);
++  CHECK(!profilingAllowed(p, s)); // restricted, capabilities unknown
++
++  unlink(p);
++  rmdir(root);
++
++  if (failures) {
++    fprintf(stderr, "%d failure(s)\n", failures);
++    return 1;
++  }
++  printf("PASS\n");
++  return 0;
++}
+-- 
+2.53.0
+

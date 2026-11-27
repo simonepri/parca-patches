@@ -1,4 +1,4 @@
-# Checks every change: the patches apply to the pinned upstream release, the patched packages' unit tests pass, and the image builds.
+# Checks every change: the patches apply to the pinned upstreams, the patched unit tests pass, and the Parca and parcagpu images build.
 name: CI
 
 on:
@@ -64,3 +64,44 @@ jobs:
           docker logs parca
           echo "::error::Parca did not serve the UI within 60 seconds"
           exit 1
+
+  parcagpu-unit-tests:
+    name: parcagpu Unit Tests
+    needs: [validate-patches]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Install Mise
+        uses: jdx/mise-action@v5
+        with:
+          cache: true
+      - name: Run Patched parcagpu Unit Tests
+        run: mise run test:parcagpu
+
+  parcagpu-image:
+    name: parcagpu Image Build
+    needs: [validate-patches]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Install Mise
+        uses: jdx/mise-action@v5
+        with:
+          cache: true
+      - name: Build the Patched parcagpu Image
+        run: mise run build:parcagpu
+      - name: Check the Image Layout and Patched Library
+        run: |
+          tag="$(mise env --json | jq -r .PARCAGPU_IMAGE_TAG)"
+          docker run --rm "local/parcagpu:$tag" sh -c '
+            ls -l /usr/lib
+            for f in libparcagpucupti.so libcupti.so.12 libcupti.so.13 libnvperf_host.so.12 libnvperf_host.so.13; do
+              test -s "/usr/lib/$f" || { echo "::error::/usr/lib/$f is missing"; exit 1; }
+            done
+            grep -q RmProfilingAdminOnly /usr/lib/libparcagpucupti.so || { echo "::error::libparcagpucupti.so lacks the profiling access check"; exit 1; }
+            echo "parcagpu image has the expected layout"
+          '
