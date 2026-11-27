@@ -14,6 +14,20 @@
           "jsonpath": "$.env.PARCA_PATCH_VERSION"
         }
       ]
+    },
+    "patches/parcagpu": {
+      "component": "parcagpu",
+      "release-type": "simple",
+      "skip-changelog": true,
+      "bump-minor-pre-major": true,
+      "initial-version": "0.1.0",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "/mise.toml",
+          "jsonpath": "$.env.PARCAGPU_PATCH_VERSION"
+        }
+      ]
     }
   }
 }
